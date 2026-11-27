@@ -640,6 +640,8 @@ fn probe_round<B: ResourceBackend>(
     dirty: &mut std::collections::HashSet<usize>,
 ) {
     let mut left = keys.len();
+    // Where the round starts: keys before it are probed after the wrap.
+    let start = *cursor % keys.len().max(1);
     let mut probed = 0;
     // Bytes of the textures to be read whole, and of those among them read so only now and then.
     let mut whole = 0;
@@ -652,7 +654,7 @@ fn probe_round<B: ResourceBackend>(
         let idx = *cursor % keys.len();
         let key = keys[idx];
         let Some(t) = textures.get_mut(&key).filter(|t| if blank { t.blank } else { t.hot > 0 }) else {
-            keys.swap_remove(idx);
+            leave_round(keys, idx, start, cursor);
             continue;
         };
         probed += 1;
@@ -700,11 +702,23 @@ fn probe_round<B: ResourceBackend>(
             t.hot == 0
         };
         if leave {
-            keys.swap_remove(idx);
+            leave_round(keys, idx, start, cursor);
         } else {
             *cursor = idx + 1;
         }
     }
+}
+
+/// Takes `keys[idx]` out of a [`probe_round`] that started at `start`. The last key moves into its
+/// place: if it was at or past `start` and the round has wrapped, it was probed already and the
+/// cursor moves past it; otherwise it is still to be probed and the cursor stays on `idx`.
+/// (Probing it again cost the round its last step, and the key just before `start` went
+/// unprobed: a blank texture's first frame came a submission late whenever another blank texture
+/// was written in the same round.)
+fn leave_round(keys: &mut Vec<usize>, idx: usize, start: usize, cursor: &mut usize) {
+    keys.swap_remove(idx);
+    // `keys.len()` is now where the moved key was.
+    *cursor = if idx < start && keys.len() >= start { idx + 1 } else { idx };
 }
 
 /// The key of a texture a view names by address and description (no resource object): a number no
